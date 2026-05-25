@@ -15,47 +15,143 @@ from Net.utils import (MODELS, generate_save_dir,
                            training_info)
 
 def export_to_onnx(model, data_module, save_path):
-    """Helper function to export the model to ONNX bypassing the dynamic_axes conversion bug."""
     print("\n>>> Starting ONNX Export...")
-    model.eval()
+
+    # 1. Get core model
+    core_model = getattr(model, 'model', getattr(model, 'net', model))
+    core_model.eval()
+    onnx_file = osp.join(save_path, 'model.onnx')
 
     try:
-        # Obtain and prepare sample input
+        # 2. Get input from val_loader
         val_loader = data_module.val_dataloader()
         batch = next(iter(val_loader))
-        input_sample = batch[0] if isinstance(batch, (list, tuple)) else batch
+        
+        # Determine sensor key
+        sensor_key = getattr(model, 'sensor_based', 'imu')
+        
+        # Extract first sample/timestep for tracing
+        # Batch shapes are [bs, dim, seq_len]
+        sensor = batch[sensor_key][0:1, :, 0:1].to(model.device)
+        correction = batch['filtered_gps'][0:1, :, 0:1].to(model.device)
+        initial_state = batch['initial_state'][0:1].to(model.device)
 
-        if isinstance(input_sample, torch.Tensor):
-            input_sample = input_sample.to(model.device)
+        # Initialize internal beliefs for tracing
+        core_model.init_beliefs(initial_state)
 
-        onnx_file = osp.join(save_path, 'model.onnx')
+        print(f">>> Exporting using legacy tracing...")
+        print(f">>> Sensor shape: {sensor.shape}, Correction shape: {correction.shape}")
 
-        # 1. We remove 'dynamic_axes' entirely for the first test.
-        # This determines if the core model graph is exportable in Python 3.14.
-        # 2. We pass input_sample directly without tuple-wrapping to avoid treespec errors.
         torch.onnx.export(
-            model,
-            input_sample,
+            core_model,
+            (sensor, correction),
             onnx_file,
             export_params=True,
             opset_version=12,
             do_constant_folding=True,
-            input_names=['input'],
-            output_names=['output']
+            input_names=['sensor', 'correction'],
+            output_names=['output'],
+            dynamic_axes={
+                'sensor': {0: 'batch_size'},
+                'correction': {0: 'batch_size'},
+                'output': {0: 'batch_size'}
+            }
         )
-        print(f">>> ONNX model successfully saved to: {onnx_file}")
-        print(">>> NOTE: This export uses static shapes. Verify this works before re-enabling dynamic axes.\n")
+
+        if osp.exists(onnx_file):
+            print(f">>> SUCCESS! File generated: {onnx_file}")
+            return onnx_file
+        else:
+            print(">>> Export finished but file not found.")
+            return None
 
     except Exception as e:
-        import traceback
-        print("\n" + "!"*30)
-        print(">>> ONNX EXPORT FAILED")
+        print("\n>>> EXPORT FAILURE")
         traceback.print_exc()
-        print("!"*30 + "\n")
-        print("Common Troubleshooting Tips:")
-        print("1. Ensure your forward() method does not contain data-dependent control flow (e.g., if x.mean() > 0).")
-        print("2. Check if all operations used in the model are supported by ONNX opset 12.")
-        print("3. Verify that all tensors are on the same device as the model during export.")
+        print("Tip: Ensure all assertions in forward path are commented out.")
+        return None
+
+def export_to_tf(onnx_file, save_path):
+    print("\n>>> Starting ONNX to TensorFlow Conversion...")
+    tf_path = osp.join(save_path, 'tf_model')
+    
+    # 1. Simplify ONNX (highly recommended for TF conversion)
+    try:
+        import onnxsim
+        import onnx
+        print(">>> Simplifying ONNX model...")
+        model_onnx = onnx.load(onnx_file)
+        model_simp, check = onnxsim.simplify(model_onnx)
+        if check:
+            onnx_file_simp = onnx_file.replace('.onnx', '_simp.onnx')
+            onnx.save(model_simp, onnx_file_simp)
+            onnx_file = onnx_file_simp
+            print(f">>> Simplified ONNX saved to: {onnx_file}")
+    except Exception as e:
+        print(f">>> ONNX simplification skipped/failed: {e}")
+
+    # 2. Convert to TF
+    # Try onnx2tf first (most reliable modern tool)
+    try:
+        import subprocess
+        import os
+        onnx2tf_path = os.path.expanduser('~/.local/bin/onnx2tf')
+        if not os.path.exists(onnx2tf_path):
+            onnx2tf_path = 'onnx2tf' # Fallback to PATH
+
+        print(f">>> Attempting conversion via {onnx2tf_path}...")
+        subprocess.run([onnx2tf_path, '-i', onnx_file, '-o', tf_path, '--non_verbose'], check=True)
+        print(f">>> SUCCESS! TensorFlow model directory created: {tf_path}")
+
+        # 3. Handle TFLite (onnx2tf often creates them automatically)
+        tflite_auto = osp.join(tf_path, onnx_file.split('/')[-1].replace('.onnx', '_float32.tflite'))
+        tflite_dest = osp.join(save_path, 'model.tflite')
+
+        if osp.exists(tflite_auto):
+            import shutil
+            shutil.copy(tflite_auto, tflite_dest)
+            print(f">>> SUCCESS! TFLite model (auto-generated) saved to: {tflite_dest}")
+        else:
+            # Fallback manual conversion if onnx2tf didn't make a TFLite file but made a SavedModel
+            try:
+                import tensorflow as tf
+                print(">>> Attempting manual TFLite conversion from SavedModel...")
+                converter = tf.lite.TFLiteConverter.from_saved_model(tf_path)
+                tflite_model = converter.convert()
+                with open(tflite_dest, 'wb') as f:
+                    f.write(tflite_model)
+                print(f">>> SUCCESS! TFLite model (manual) saved to: {tflite_dest}")
+            except Exception as e:
+                print(f">>> Manual TFLite conversion skipped/failed: {e}")
+        return
+    except Exception as e:
+        print(f">>> onnx2tf failed or not installed: {e}")
+
+    # Try onnx-tf (legacy)
+    try:
+        # Patch onnx import for onnx-tf if needed
+        import onnx
+        if not hasattr(onnx, 'mapping'):
+            import onnx.helper
+            # Mocking mapping for old onnx-tf compatibility
+            class MockMapping:
+                NP_TYPE_TO_TENSOR_TYPE = {
+                    'float32': 1, 'float64': 11, 'int32': 6, 'int64': 7
+                }
+            onnx.mapping = MockMapping()
+
+        from onnx_tf.backend import prepare
+        print(">>> Attempting conversion via onnx-tf...")
+        onnx_model = onnx.load(onnx_file)
+        tf_rep = prepare(onnx_model)
+        tf_rep.export_graph(tf_path)
+        print(f">>> SUCCESS! TensorFlow model saved to: {tf_path}")
+    except Exception as e:
+        print(f">>> onnx-tf conversion failed: {e}")
+        print("\n--- TF CONVERSION TIPS ---")
+        print("1. Install onnx2tf: pip install onnx2tf")
+        print("2. Ensure TensorFlow version matches your ONNX opset.")
+        print("3. Use a stable environment (e.g., Python 3.10) for conversion if 3.14 fails.")
 
 def main(args: argparse.ArgumentParser, cfg: Config) -> None:
     training_info()
@@ -102,9 +198,11 @@ def main(args: argparse.ArgumentParser, cfg: Config) -> None:
     # Run training
     trainer.fit(model, datamodule=data_module)
 
-    # Export to ONNX after training
+    # Export to ONNX and then TF after training
     if cfg.get('export_onnx', True):
-        export_to_onnx(model, data_module, save_dir['weight_dir'])
+        onnx_file = export_to_onnx(model, data_module, save_dir['weight_dir'])
+        if onnx_file and cfg.get('export_tf', True):
+            export_to_tf(onnx_file, save_dir['weight_dir'])
 
 
 def parse_args():

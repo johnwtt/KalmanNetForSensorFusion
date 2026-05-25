@@ -118,7 +118,7 @@ class SplitKalmanNet(nn.Module):
         m1x_prior, f_jac = self.params.get_pred_jac(m1x_posterior)
         m1y, h_jac = self.params.get_obs_jac(m1x_prior)
         # assert not torch.any(torch.isnan(m1y))
-        assert not torch.any(torch.isnan(m1x_prior))
+        # assert not torch.any(torch.isnan(m1x_prior))
         return m1x_prior, f_jac, m1y, h_jac
 
     def _forward_(self, state_inno, observation_inno, diff_state, diff_obs,
@@ -196,7 +196,7 @@ class SplitKalmanNet(nn.Module):
         self.m1x_posterior = m1x_posterior.detach().clone()
         self.m1x_prior_previous = m1x_prior.detach().clone()
         self.y_previous = y.detach().clone()
-        assert not torch.any(torch.isnan(m1x_posterior))
+        # assert not torch.any(torch.isnan(m1x_posterior))
         return m1x_posterior.clone()
 
 

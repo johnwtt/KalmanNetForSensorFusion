@@ -41,6 +41,47 @@ def _mean_squared_error_update(
     return sum_squared_error, n_obs
 
 
+def _mean_absolute_error_update(
+        preds: Tensor,
+        target: Tensor,
+        dim: int | Tuple | None = None) -> Tuple[Tensor, int]:
+    _check_same_shape(preds, target)
+    diff = preds - target
+    sum_absolute_error = torch.sum(torch.abs(diff), dim=dim)
+    if dim is None:
+        n_obs = target.numel()
+    elif isinstance(dim, tuple):
+        n_obs = 1
+        for val in dim:
+            n_obs *= target.shape[val]
+    else:
+        n_obs = target.shape[dim]
+    return sum_absolute_error, n_obs
+
+
+class MAE(Metric):
+
+    def __init__(self, dim: int | Tuple | None = None):
+        super().__init__()
+        self.add_state('sum_absolute_error',
+                       default=torch.tensor(0.0),
+                       dist_reduce_fx='sum')
+        self.add_state('total',
+                       default=torch.tensor(0.0),
+                       dist_reduce_fx='sum')
+        self.dim = dim
+
+    def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
+        assert preds.shape == target.shape
+        sum_absolute_error, n_obs = _mean_absolute_error_update(
+            preds, target, self.dim)
+        self.sum_absolute_error = self.sum_absolute_error + sum_absolute_error
+        self.total += n_obs
+
+    def compute(self) -> Tensor:
+        return self.sum_absolute_error / self.total
+
+
 class MSE(Metric):
 
     def __init__(self, dim: int | Tuple | None = None, squared=True):
@@ -182,59 +223,6 @@ class AxisMSEdB(AxisMSE):
         return res
 
 
-# def compute_metric(predict: Tensor,
-#                    target: Tensor,
-#                    save_path: str | None = None,
-#                    name: str | None = None) -> None:
-#     """generte metric for prediction.
-
-#     Args:
-#         predict (Tensor): shape of prediction is [batch, state, seq]
-#         target (Tensor): shape of prediction is [batch, state, seq]
-#         save_path (str | None): _description_
-#         name (str | None): _description_
-#     """
-#     assert name is not None, 'Need name to display metric.'
-#     loss_fn = nn.MSELoss(reduction='mean')
-#     data_len = predict.shape[0]
-#     MSE_linear_arr = torch.zeros(data_len)
-#     for j in range(data_len):
-#         MSE_linear_arr[j] = loss_fn(predict[j, :], target[j, :])
-#     print(MSE_linear_arr.shape)
-#     MSE_linear_avg = torch.mean(MSE_linear_arr)
-#     MSE_dB_avg = 10 * torch.log10(MSE_linear_avg)
-
-#     # Standard deviation
-#     MSE_linear_std = torch.std(MSE_linear_arr, unbiased=True)
-#     print(MSE_linear_std)
-#     # Confidence interval
-#     KF_std_dB = 10 * torch.log10(MSE_linear_std + MSE_linear_avg) - MSE_dB_avg
-
-#     print(f'{name} - MSE LOSS: {MSE_dB_avg}[dB]')
-#     print(f'{name} - STD: {KF_std_dB}[dB]')
-#     if save_path is not None:
-#         color = ['-ro', 'darkorange', 'k-', 'b-', 'g-']
-#         legend = ['MSE_AVG', 'MSE_dB_AVG', 'MSE STD', 'MSE_STD_dB']
-#         fig = plt.figure(figsize=(40, 20))
-#         xplt = range(0, data_len)
-#         yplt_0 = MSE_linear_avg * torch.ones(data_len)
-#         plt.plot(xplt, yplt_0, color[0], label=legend[0])
-
-#         yplt_1 = MSE_dB_avg * torch.ones(data_len)
-#         plt.plot(xplt, yplt_1, color[1], label=legend[1])
-
-#         yplt_2 = MSE_linear_std * torch.ones(data_len)
-#         plt.plot(xplt, yplt_2, color[2], label=legend[2])
-
-#         yplt_3 = KF_std_dB * torch.ones(data_len)
-#         plt.plot(xplt, yplt_3, color[3], label=legend[3])
-#         plt.xlabel('Number of samples', fontsize=32)
-#         plt.ylabel('MSE Loss Value', fontsize=32)
-#         plt.legend(fontsize=32)
-#         plt.grid(True)
-#         plt.savefig(save_path)
-
-
 def compute_metric(
         preds: torch.Tensor,
         targets: torch.Tensor) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -255,6 +243,7 @@ def compute_metric(
     mse_fn = MSE()
     mse_dB_fn = MSEdB()
     rmse_fn = MSE(squared=False)
+    mae_fn = MAE()
     axis_mse_fn = AxisMSE(num_axis=num_axis)
     axis_mse_dB_fn = AxisMSEdB(num_axis=num_axis)
     axis_rmse_fn = AxisMSE(num_axis=num_axis, squared=False)
@@ -262,6 +251,7 @@ def compute_metric(
     mse = mse_fn(preds, targets)
     mse_dB = mse_dB_fn(preds, targets)
     rmse = rmse_fn(preds, targets)
+    mae = mae_fn(preds, targets)
     axis_mse = axis_mse_fn(preds, targets)
     axis_mse_dB = axis_mse_dB_fn(preds, targets)
     axis_rmse = axis_rmse_fn(preds, targets)
@@ -270,6 +260,7 @@ def compute_metric(
         mse=mse,
         mse_dB=mse_dB,
         rmse=rmse,
+        mae=mae,
         axis_mse=axis_mse,
         axis_mse_dB=axis_mse_dB,
         axis_rmse=axis_rmse,
@@ -279,6 +270,7 @@ def compute_metric(
     mse_curves_fn = MSE(dim=(0, 1))
     mse_dB_curves_fn = MSEdB(dim=(0, 1))
     rmse_curves_fn = MSE(dim=(0, 1), squared=False)
+    mae_curves_fn = MAE(dim=(0, 1))
     axis_mse_curves_fn = AxisMSE(num_axis=num_axis, dim=0)
     axis_mse_dB_curves_fn = AxisMSEdB(num_axis=num_axis, dim=0)
     axis_rmse_curves_fn = AxisMSE(num_axis=num_axis, dim=0, squared=False)
@@ -286,6 +278,7 @@ def compute_metric(
     mse_curves = mse_curves_fn(preds, targets)
     mse_dB_curves = mse_dB_curves_fn(preds, targets)
     rmse_curves = rmse_curves_fn(preds, targets)
+    mae_curves = mae_curves_fn(preds, targets)
     axis_mse_curves = axis_mse_curves_fn(preds, targets)
     axis_mse_dB_curves = axis_mse_dB_curves_fn(preds, targets)
     axis_rmse_curves = axis_rmse_curves_fn(preds, targets)
@@ -294,6 +287,7 @@ def compute_metric(
         mse_curves=mse_curves,
         mse_dB_curves=mse_dB_curves,
         rmse_curves=rmse_curves,
+        mae_curves=mae_curves,
         axis_mse_curves=axis_mse_curves,
         axis_mse_dB_curves=axis_mse_dB_curves,
         axis_rmse_curves=axis_rmse_curves,
@@ -307,4 +301,5 @@ def print_metrics(predict: Tensor, target: Tensor, name: str = None):
     print(f"{name} - MSE LOSS: {scalar['mse_dB']}[dB]")
     print(f"{name} - MSE LOSS: {scalar['mse']}")
     print(f"{name} - RMSE LOSS: {scalar['rmse']}")
+    print(f"{name} - MAE LOSS: {scalar['mae']}")
     return scalar, curves

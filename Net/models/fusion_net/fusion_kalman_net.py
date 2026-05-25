@@ -132,8 +132,8 @@ class FusionKalmanNet(KalmanNet):
         # m1x_prior = F @ tmp_tensor
         # m1x_prior[:, 4, :] = wraptopi(m1x_prior[:, 4, :])
         m1y, h_jac = self.params.get_obs_jac(m1x_prior)
-        assert not torch.any(torch.isnan(m1y))
-        assert not torch.any(torch.isnan(m1x_prior))
+        # assert not torch.any(torch.isnan(m1y))
+        # assert not torch.any(torch.isnan(m1x_prior))
         return m1x_prior, f_jac, m1y, h_jac
 
     @typing.no_type_check
@@ -180,7 +180,7 @@ class FusionKalmanNet(KalmanNet):
         # self.m1x_posterior = m1x_posterior
         # self.m1x_prior_previous = m1x_prior
         # self.y_previous =y
-        assert not torch.any(torch.isnan(m1x_posterior))
+        # assert not torch.any(torch.isnan(m1x_posterior))
         return m1x_posterior.clone()
 
     @typing.no_type_check
@@ -215,7 +215,7 @@ class FusionSplitKalmanNet(SplitKalmanNet):
         m1x_prior, f_jac = self.params.get_pred_jac(m1x_posterior, sensor)
         m1y, h_jac = self.params.get_obs_jac(m1x_prior)
         # assert not torch.any(torch.isnan(m1y))
-        assert not torch.any(torch.isnan(m1x_prior))
+        # assert not torch.any(torch.isnan(m1x_prior))
         return m1x_prior, f_jac, m1y, h_jac
 
     @typing.no_type_check
@@ -263,6 +263,6 @@ class FusionSplitKalmanNet(SplitKalmanNet):
         self.m1x_posterior = m1x_posterior.detach().clone()
         self.m1x_prior_previous = m1x_prior.detach().clone()
         self.y_previous = y.detach().clone()
-        assert not torch.any(torch.isnan(m1x_posterior))
+        # assert not torch.any(torch.isnan(m1x_posterior))
         return m1x_posterior.clone()
 

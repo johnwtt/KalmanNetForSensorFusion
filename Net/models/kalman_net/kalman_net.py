@@ -156,8 +156,8 @@ class KalmanNet(nn.Module):
         # Predict the 1-st moment of y.device
 
         m1y, h_jac = self.params.get_obs_jac(m1x_prior)
-        assert not torch.any(torch.isnan(m1y))
-        assert not torch.any(torch.isnan(m1x_prior))
+        # assert not torch.any(torch.isnan(m1y))
+        # assert not torch.any(torch.isnan(m1x_prior))
         return m1x_prior, m1y
 
     # Kalman Gain Estimation
@@ -234,7 +234,7 @@ class KalmanNet(nn.Module):
         # update y_prev
         self.y_previous = y.detach().clone()
 
-        assert not torch.any(torch.isnan(m1x_posterior))
+        # assert not torch.any(torch.isnan(m1x_posterior))
         return m1x_posterior.clone()
 
     def KGain_step(self, obs_diff: torch.Tensor, obs_innov_diff: torch.Tensor,

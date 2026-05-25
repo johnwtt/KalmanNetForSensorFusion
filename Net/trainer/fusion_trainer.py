@@ -116,6 +116,7 @@ class LitFusionKalmanNet(BaseFilterNet):
         self.train_mse_dB.update(mask_pred, mask_target)
         # self.train_axis_mse_dB.update(pred, target)
         self.train_rmse.update(mask_pred, mask_target)
+        self.train_mae.update(mask_pred, mask_target)
         # self.train_axis_rmse.update(pred, target)
 
         # return train_loss
@@ -158,6 +159,7 @@ class LitFusionKalmanNet(BaseFilterNet):
         self.val_mse_dB.update(masked_preds, masked_targets)
         # self.val_axis_mse_dB.update(pred, target)
         self.val_rmse.update(masked_preds, masked_targets)
+        self.val_mae.update(masked_preds, masked_targets)
         # self.val_axis_rmse.update(pred, target)
 
         return val_loss

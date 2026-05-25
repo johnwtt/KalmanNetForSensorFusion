@@ -12,7 +12,7 @@ from lightning.pytorch.utilities import grad_norm
 from torch import Tensor, optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from Net.utils import MODELS, MSE, AxisMSE, AxisMSEdB, MSEdB
+from Net.utils import MODELS, MSE, AxisMSE, AxisMSEdB, MSEdB, MAE
 
 # cSpell:ignore preds, Kalman, rmse
 
@@ -37,6 +37,7 @@ class BaseFilterNet(pl.LightningModule):
         self.train_mse_dB = MSEdB()
         # self.train_axis_mse_dB = AxisMSEdB(cfg.metric.num_metric_dims)
         self.train_rmse = MSE(squared=False)
+        self.train_mae = MAE()
         # self.train_axis_rmse = AxisMSE(cfg.metric.num_metric_dims,
         #                                squared=False)
 
@@ -45,6 +46,7 @@ class BaseFilterNet(pl.LightningModule):
         self.val_mse_dB = MSEdB()
         # self.val_axis_mse_dB = AxisMSEdB(cfg.metric.num_metric_dims)
         self.val_rmse = MSE(squared=False)
+        self.val_mae = MAE()
         # self.val_axis_rmse = AxisMSE(cfg.metric.num_metric_dims, squared=False)
         # https://lightning.ai/docs/pytorch/stable/model/manual_optimization.html
         self.automatic_optimization = False
@@ -117,6 +119,7 @@ class BaseFilterNet(pl.LightningModule):
         self.train_mse_dB.update(pred, target)
         self.train_axis_mse_dB.update(pred, target)
         self.train_rmse.update(pred, target)
+        self.train_mae.update(pred, target)
         self.train_axis_rmse.update(pred, target)
 
         # return train_loss
@@ -125,19 +128,19 @@ class BaseFilterNet(pl.LightningModule):
         sch = self.lr_schedulers()
         if sch is not None:
             sch.step()
-        # TODO: random length hard to clear comput metric.
-        # mse = self.train_axis_mse_dB.compute()
-        # rmse = self.train_axis_rmse.compute()
-        # values = dict()
-        # for idx, name in enumerate(self.cfg.metric.metric_dim_names):
-        #     values[f'train/{name}_Axis_MSE[dB]'] = mse[idx]
-        #     values[f'train/{name}_Axis_RMSE'] = rmse[idx]
-
-        # self.log_dict(values)
-        # self.train_axis_mse_dB.reset()
-        # self.train_axis_rmse.reset()
+        
+        # Explicitly compute and print metrics for the user
+        train_rmse_val = self.train_rmse.compute()
+        train_mae_val = self.train_mae.compute()
+        train_mse_db_val = self.train_mse_dB.compute()
+        
+        print(f"\n--- Epoch {self.current_epoch} Results ---")
+        print(f"Train RMSE: {train_rmse_val:.4f} m")
+        print(f"Train MAE:  {train_mae_val:.4f} m")
+        print(f"Train MSE:  {train_mse_db_val:.4f} dB")
 
         self.log('train/RMSE', self.train_rmse, prog_bar=True)
+        self.log('train/MAE', self.train_mae, prog_bar=True)
         self.log('train/MSE[dB]', self.train_mse_dB, prog_bar=True)
 
     def on_validation_start(self) -> None:
@@ -180,6 +183,7 @@ class BaseFilterNet(pl.LightningModule):
         self.val_mse_dB.update(masked_preds, masked_targets)
         # self.val_axis_mse_dB.update(pred, target)
         self.val_rmse.update(masked_preds, masked_targets)
+        self.val_mae.update(masked_preds, masked_targets)
         # self.val_axis_rmse.update(pred, target)
 
         return val_loss
@@ -198,6 +202,7 @@ class BaseFilterNet(pl.LightningModule):
 
         self.log('val/MSE[dB]', self.val_mse_dB)
         self.log('val/RMSE', self.val_rmse)
+        self.log('val/MAE', self.val_mae)
         self.log('val_MSE_dB', self.val_mse_dB)  # for monitor
 
     def test_step(self, batch, batch_idx):

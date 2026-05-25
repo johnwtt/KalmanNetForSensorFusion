@@ -1,4 +1,4 @@
-from .metrics import (MSE, AxisMSE, AxisMSEdB, MSEdB, compute_metric,
+from .metrics import (MAE, MSE, AxisMSE, AxisMSEdB, MSEdB, compute_metric,
                       print_metrics)
 from .misc import generate_save_dir, training_info
 
